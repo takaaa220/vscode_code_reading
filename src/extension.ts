@@ -1,26 +1,128 @@
-// The module 'vscode' contains the VS Code extensibility API
-// Import the module and reference it with the alias vscode in your code below
-import * as vscode from 'vscode';
+import * as vscode from "vscode";
+import { relative } from "path";
+import { appendFileSync, writeFileSync } from "fs";
 
-// This method is called when your extension is activated
-// Your extension is activated the very first time the command is executed
 export function activate(context: vscode.ExtensionContext) {
+  const workspaceFolders = vscode.workspace.workspaceFolders;
+  if (!workspaceFolders) {
+    vscode.window.showInformationMessage("not in a workspace");
+    return;
+  }
 
-	// Use the console to output diagnostic information (console.log) and errors (console.error)
-	// This line of code will only be executed once when your extension is activated
-	console.log('Congratulations, your extension "support-code-reading" is now active!');
+  const projectRoot = workspaceFolders[0].uri.fsPath;
 
-	// The command has been defined in the package.json file
-	// Now provide the implementation of the command with registerCommand
-	// The commandId parameter must match the command field in package.json
-	let disposable = vscode.commands.registerCommand('support-code-reading.helloWorld', () => {
-		// The code you place here will be executed every time your command is executed
-		// Display a message box to the user
-		vscode.window.showInformationMessage('Hello World from support-code-reading!');
-	});
+  const memoSaver = MemoSaver(projectRoot);
+  memoSaver.newMemo({});
 
-	context.subscriptions.push(disposable);
+  let disposable = vscode.commands.registerCommand("extension.addNote", () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showErrorMessage("no active editor");
+      return;
+    }
+
+    vscode.window.showInputBox({ prompt: "Input memo" }).then((inputText) => {
+      if (inputText === undefined) {
+        vscode.window.showErrorMessage("no input");
+        return;
+      }
+
+      memoSaver.addMemo(
+        convert({
+          inputText,
+          document: editor.document,
+          selection: editor.selection,
+          projectRoot,
+        })
+      );
+      vscode.window
+        .showInformationMessage(`Added memo!`, "Open memo")
+        .then((selection) => {
+          if (selection !== "Open memo") {
+            return;
+          }
+
+          vscode.workspace
+            .openTextDocument(memoSaver.getCurrentActiveFile())
+            .then((doc) => {
+              vscode.window.showTextDocument(doc);
+            });
+        });
+    });
+  });
+
+  context.subscriptions.push(disposable);
 }
 
-// This method is called when your extension is deactivated
 export function deactivate() {}
+
+const MemoSaver = (workspaceRootPath: string) => {
+  const suffix = "code_memo";
+
+  let currentActiveFile = "";
+
+  const newMemo = ({
+    fileNameWithoutExt: _fileNameWithoutExt,
+    title: _title,
+  }: {
+    fileNameWithoutExt?: string;
+    title?: string;
+  }) => {
+    const title = _title ?? "Code Reading Memo";
+    const fileNameWithoutExt =
+      _fileNameWithoutExt ??
+      (() => {
+        const now = new Date();
+        return `memo_${now.getFullYear()}_${
+          now.getMonth() + 1
+        }_${now.getDate()}_${now.getHours()}_${now.getMinutes()}`;
+      })();
+
+    currentActiveFile = `${workspaceRootPath}/${fileNameWithoutExt}_${suffix}.md`;
+
+    writeFileSync(currentActiveFile, `# ${title}\n`);
+  };
+
+  const addMemo = (addedText: string) => {
+    if (!currentActiveFile) {
+      newMemo({});
+    }
+
+    appendFileSync(currentActiveFile, addedText);
+  };
+
+  return {
+    getCurrentActiveFile: () => currentActiveFile,
+    newMemo,
+    addMemo,
+  };
+};
+
+type Convert = (input: {
+  inputText: string;
+  document: vscode.TextDocument;
+  selection: vscode.Selection;
+  projectRoot: string;
+}) => string;
+
+const convert: Convert = ({ inputText, document, selection, projectRoot }) => {
+  const startLine = selection.start.line;
+  const endLine = selection.end.line;
+
+  const relativeFilePathWithLineNumber = `${relative(
+    projectRoot,
+    document.fileName
+  )}#${startLine + 1}`;
+  const githubUrl = "https://github.com";
+
+  const selectedText = [...Array(endLine - startLine + 1).keys()]
+    .map((_, i) => {
+      const line = startLine + i;
+      return document.lineAt(line).text;
+    })
+    .join("\n");
+  const ext = document.fileName.split(".").pop();
+  const codeBlock = `\`\`\`${ext ?? ""}\n${selectedText}\n\`\`\``;
+
+  return `\n${inputText}  \n[[ファイル](${relativeFilePathWithLineNumber})] [[GitHub](${githubUrl})]\n\n${codeBlock}\n`;
+};

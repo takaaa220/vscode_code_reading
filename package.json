@@ -12,10 +12,19 @@
   "activationEvents": [],
   "main": "./out/extension.js",
   "contributes": {
+    "menus": {
+      "editor/context": [
+        {
+          "when": "editorTextFocus",
+          "command": "extension.addNote",
+          "group": "navigation"
+        }
+      ]
+    },
     "commands": [
       {
-        "command": "support-code-reading.helloWorld",
-        "title": "Hello World"
+        "command": "extension.addNote",
+        "title": "[support-code-reading] Add memo"
       }
     ]
   },
