@@ -7,6 +7,7 @@ import {
   readdirSync,
   writeFileSync,
 } from "fs";
+import { execSync } from "child_process";
 
 export function activate(context: vscode.ExtensionContext) {
   const suffix = "code_memo";
@@ -26,7 +27,7 @@ export function activate(context: vscode.ExtensionContext) {
       .filter((file) => file.endsWith(`.${suffix}.md`))
       .map((file) => file.replace(`.${suffix}.md`, ""));
 
-    const newOption = "Create new file";
+    const newOption = "[Create new file]";
 
     const pickOptions = [newOption, ...memoFiles];
     const selected = await vscode.window.showQuickPick(pickOptions, {
@@ -151,11 +152,36 @@ const convert: Convert = ({ inputText, document, selection, projectRoot }) => {
   const startLine = selection.start.line;
   const endLine = selection.end.line;
 
-  const relativeFilePathWithLineNumber = `${relative(
-    projectRoot,
-    document.fileName
-  )}#${startLine + 1}`;
-  const githubUrl = "https://github.com";
+  const relativeFilePath = relative(projectRoot, document.fileName);
+  const relativeFilePathWithLineNumber = `${relativeFilePath}#${startLine + 1}`;
+
+  const githubUrl = (() => {
+    try {
+      vscode.window.showInformationMessage(execSync("pwd").toString());
+
+      // NOTE: this doesn't work correctly (pwd is not project root)
+      // TODO: fix it
+      const remoteUrl = execSync(`git config --get remote.origin.url`)
+        .toString()
+        .trim();
+      const branchName = execSync("git rev-parse --abbrev-ref HEAD")
+        .toString()
+        .trim();
+
+      const match = /github\.com[:/](.+)\/(.+)\.git/.exec(remoteUrl);
+      if (!match) {
+        return undefined;
+      }
+
+      const [, userName, repoName] = match;
+      return `https://github.com/${userName}/${repoName}/blob/${branchName}/${relativeFilePath}#L${
+        startLine + 1
+      }-L${endLine + 1}`;
+    } catch {
+      // not git repository
+      return undefined;
+    }
+  })();
 
   const selectedText = [...Array(endLine - startLine + 1).keys()]
     .map((_, i) => {
@@ -166,5 +192,7 @@ const convert: Convert = ({ inputText, document, selection, projectRoot }) => {
   const ext = document.fileName.split(".").pop();
   const codeBlock = `\`\`\`${ext ?? ""}\n${selectedText}\n\`\`\``;
 
-  return `\n${inputText}  \n[[ファイル](${relativeFilePathWithLineNumber})] [[GitHub](${githubUrl})]\n\n${codeBlock}\n`;
+  return `\n${inputText}  \n[[ファイル](${relativeFilePathWithLineNumber})] ${
+    githubUrl ? `[[GitHub](${githubUrl})]` : ""
+  }\n\n${codeBlock}\n`;
 };
