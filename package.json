@@ -16,15 +16,21 @@
       "editor/context": [
         {
           "when": "editorTextFocus",
-          "command": "extension.addNote",
+          "command": "extension.addMemo",
           "group": "navigation"
         }
       ]
     },
     "commands": [
       {
-        "command": "extension.addNote",
-        "title": "[support-code-reading] Add memo"
+        "command": "extension.newMemo",
+        "title": "New Memo",
+        "category": "Code Reading Memo"
+      },
+      {
+        "command": "extension.addMemo",
+        "title": "Add Memo",
+        "category": "Code Reading Memo"
       }
     ]
   },

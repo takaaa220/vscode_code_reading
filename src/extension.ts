@@ -1,8 +1,16 @@
 import * as vscode from "vscode";
 import { relative } from "path";
-import { appendFileSync, writeFileSync } from "fs";
+import {
+  accessSync,
+  appendFileSync,
+  constants,
+  readdirSync,
+  writeFileSync,
+} from "fs";
 
 export function activate(context: vscode.ExtensionContext) {
+  const suffix = "code_memo";
+
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders) {
     vscode.window.showInformationMessage("not in a workspace");
@@ -11,23 +19,60 @@ export function activate(context: vscode.ExtensionContext) {
 
   const projectRoot = workspaceFolders[0].uri.fsPath;
 
-  const memoSaver = MemoSaver(projectRoot);
-  memoSaver.newMemo({});
+  const memoWriter = MemoWriter(projectRoot);
 
-  let disposable = vscode.commands.registerCommand("extension.addNote", () => {
+  const newMemo = async () => {
+    const memoFiles = readdirSync(projectRoot)
+      .filter((file) => file.endsWith(`.${suffix}.md`))
+      .map((file) => file.replace(`.${suffix}.md`, ""));
+
+    const newOption = "Create new file";
+
+    const pickOptions = [newOption, ...memoFiles];
+    const selected = await vscode.window.showQuickPick(pickOptions, {
+      placeHolder: "Create new file or select existing memo",
+    });
+
+    if (!selected) {
+      vscode.window.showErrorMessage("select options");
+      return;
+    }
+
+    if (selected === newOption) {
+      const title = await vscode.window.showInputBox({
+        prompt: "Input memo title",
+      });
+      if (!title) {
+        vscode.window.showErrorMessage("input title");
+        return;
+      }
+
+      memoWriter.initializeMemo(title, suffix);
+    } else {
+      memoWriter.initializeMemo(selected, suffix);
+    }
+
+    vscode.window.showInformationMessage("Initialized memo!");
+  };
+
+  const addMemo = async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       vscode.window.showErrorMessage("no active editor");
       return;
     }
 
+    if (!memoWriter.initialized()) {
+      await newMemo();
+    }
+
     vscode.window.showInputBox({ prompt: "Input memo" }).then((inputText) => {
       if (inputText === undefined) {
-        vscode.window.showErrorMessage("no input");
+        vscode.window.showErrorMessage("input memo");
         return;
       }
 
-      memoSaver.addMemo(
+      memoWriter.addMemo(
         convert({
           inputText,
           document: editor.document,
@@ -35,65 +80,62 @@ export function activate(context: vscode.ExtensionContext) {
           projectRoot,
         })
       );
+
       vscode.window
-        .showInformationMessage(`Added memo!`, "Open memo")
+        .showInformationMessage("Added memo!", "Open memo")
         .then((selection) => {
           if (selection !== "Open memo") {
             return;
           }
 
           vscode.workspace
-            .openTextDocument(memoSaver.getCurrentActiveFile())
+            .openTextDocument(memoWriter.getCurrentActiveFile())
             .then((doc) => {
               vscode.window.showTextDocument(doc);
             });
         });
     });
-  });
+  };
 
-  context.subscriptions.push(disposable);
+  let disposeNewMemo = vscode.commands.registerCommand(
+    "extension.newMemo",
+    newMemo
+  );
+  let disposeAddMemo = vscode.commands.registerCommand(
+    "extension.addMemo",
+    addMemo
+  );
+  context.subscriptions.push(disposeNewMemo, disposeAddMemo);
 }
 
 export function deactivate() {}
 
-const MemoSaver = (workspaceRootPath: string) => {
-  const suffix = "code_memo";
-
+const MemoWriter = (workspaceRootPath: string) => {
   let currentActiveFile = "";
 
-  const newMemo = ({
-    fileNameWithoutExt: _fileNameWithoutExt,
-    title: _title,
-  }: {
-    fileNameWithoutExt?: string;
-    title?: string;
-  }) => {
-    const title = _title ?? "Code Reading Memo";
-    const fileNameWithoutExt =
-      _fileNameWithoutExt ??
-      (() => {
-        const now = new Date();
-        return `memo_${now.getFullYear()}_${
-          now.getMonth() + 1
-        }_${now.getDate()}_${now.getHours()}_${now.getMinutes()}`;
-      })();
+  const initializeMemo = (title: string, suffix: string) => {
+    const fileNameWithExt = title.replace(/\s/g, "_");
+    currentActiveFile = `${workspaceRootPath}/${fileNameWithExt}.${suffix}.md`;
 
-    currentActiveFile = `${workspaceRootPath}/${fileNameWithoutExt}_${suffix}.md`;
-
-    writeFileSync(currentActiveFile, `# ${title}\n`);
+    try {
+      accessSync(currentActiveFile, constants.F_OK);
+    } catch {
+      writeFileSync(currentActiveFile, `# ${title}\n`);
+    }
   };
 
   const addMemo = (addedText: string) => {
     if (!currentActiveFile) {
-      newMemo({});
+      return;
     }
 
     appendFileSync(currentActiveFile, addedText);
   };
 
   return {
+    initialized: () => !!currentActiveFile,
     getCurrentActiveFile: () => currentActiveFile,
-    newMemo,
+    initializeMemo,
     addMemo,
   };
 };
