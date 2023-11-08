@@ -35,7 +35,7 @@ export function activate(context: vscode.ExtensionContext) {
     });
 
     if (!selected) {
-      vscode.window.showErrorMessage("select options");
+      vscode.window.showErrorMessage("Please select options");
       return;
     }
 
@@ -44,7 +44,7 @@ export function activate(context: vscode.ExtensionContext) {
         prompt: "Input memo title",
       });
       if (!title) {
-        vscode.window.showErrorMessage("input title");
+        vscode.window.showErrorMessage("Please input memo title");
         return;
       }
 
@@ -59,7 +59,7 @@ export function activate(context: vscode.ExtensionContext) {
   const addMemo = async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
-      vscode.window.showErrorMessage("no active editor");
+      vscode.window.showErrorMessage("No found active editor");
       return;
     }
 
@@ -69,7 +69,7 @@ export function activate(context: vscode.ExtensionContext) {
 
     vscode.window.showInputBox({ prompt: "Input memo" }).then((inputText) => {
       if (inputText === undefined) {
-        vscode.window.showErrorMessage("input memo");
+        vscode.window.showErrorMessage("Please input memo");
         return;
       }
 
@@ -157,14 +157,12 @@ const convert: Convert = ({ inputText, document, selection, projectRoot }) => {
 
   const githubUrl = (() => {
     try {
-      vscode.window.showInformationMessage(execSync("pwd").toString());
-
-      // NOTE: this doesn't work correctly (pwd is not project root)
-      // TODO: fix it
-      const remoteUrl = execSync(`git config --get remote.origin.url`)
+      const remoteUrl = execSync(
+        `cd ${projectRoot} && git config --get remote.origin.url`
+      )
         .toString()
         .trim();
-      const branchName = execSync("git rev-parse --abbrev-ref HEAD")
+      const commitHash = execSync(`cd ${projectRoot} && git rev-parse HEAD`)
         .toString()
         .trim();
 
@@ -174,11 +172,10 @@ const convert: Convert = ({ inputText, document, selection, projectRoot }) => {
       }
 
       const [, userName, repoName] = match;
-      return `https://github.com/${userName}/${repoName}/blob/${branchName}/${relativeFilePath}#L${
+      return `https://github.com/${userName}/${repoName}/blob/${commitHash}/${relativeFilePath}#L${
         startLine + 1
       }-L${endLine + 1}`;
     } catch {
-      // not git repository
       return undefined;
     }
   })();
@@ -192,7 +189,7 @@ const convert: Convert = ({ inputText, document, selection, projectRoot }) => {
   const ext = document.fileName.split(".").pop();
   const codeBlock = `\`\`\`${ext ?? ""}\n${selectedText}\n\`\`\``;
 
-  return `\n${inputText}  \n[[ファイル](${relativeFilePathWithLineNumber})] ${
-    githubUrl ? `[[GitHub](${githubUrl})]` : ""
+  return `\n${inputText}  \n[[ファイル](${relativeFilePathWithLineNumber})]${
+    githubUrl ? ` [[GitHub](${githubUrl})]` : ""
   }\n\n${codeBlock}\n`;
 };
