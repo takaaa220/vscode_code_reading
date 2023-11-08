@@ -1,9 +1,10 @@
 import * as vscode from "vscode";
-import { relative } from "path";
+import { join, relative } from "path";
 import {
   accessSync,
   appendFileSync,
   constants,
+  readFileSync,
   readdirSync,
   writeFileSync,
 } from "fs";
@@ -20,7 +21,8 @@ export function activate(context: vscode.ExtensionContext) {
 
   const projectRoot = workspaceFolders[0].uri.fsPath;
 
-  const memoWriter = MemoWriter(projectRoot);
+  const markdownMemoWriter = MarkdownMemoWriter(projectRoot);
+  const inlineMemoWriter = InlineMemoWriter(projectRoot, suffix);
 
   const newMemo = async () => {
     const memoFiles = readdirSync(projectRoot)
@@ -48,9 +50,9 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      memoWriter.initializeMemo(title, suffix);
+      markdownMemoWriter.initializeMemo(title, suffix);
     } else {
-      memoWriter.initializeMemo(selected, suffix);
+      markdownMemoWriter.initializeMemo(selected, suffix);
     }
 
     vscode.window.showInformationMessage("Initialized memo!");
@@ -63,7 +65,7 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    if (!memoWriter.initialized()) {
+    if (!markdownMemoWriter.initialized()) {
       await newMemo();
     }
 
@@ -73,7 +75,7 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      memoWriter.addMemo(
+      markdownMemoWriter.addMemo(
         convert({
           inputText,
           document: editor.document,
@@ -90,7 +92,7 @@ export function activate(context: vscode.ExtensionContext) {
           }
 
           vscode.workspace
-            .openTextDocument(memoWriter.getCurrentActiveFile())
+            .openTextDocument(markdownMemoWriter.getCurrentActiveFile())
             .then((doc) => {
               vscode.window.showTextDocument(doc);
             });
@@ -106,12 +108,16 @@ export function activate(context: vscode.ExtensionContext) {
     "extension.addMemo",
     addMemo
   );
-  context.subscriptions.push(disposeNewMemo, disposeAddMemo);
+  const disposeOpenedFile = vscode.workspace.onDidOpenTextDocument(() => {
+    inlineMemoWriter.reflect();
+  });
+
+  context.subscriptions.push(disposeNewMemo, disposeAddMemo, disposeOpenedFile);
 }
 
 export function deactivate() {}
 
-const MemoWriter = (workspaceRootPath: string) => {
+const MarkdownMemoWriter = (workspaceRootPath: string) => {
   let currentActiveFile = "";
 
   const initializeMemo = (title: string, suffix: string) => {
@@ -192,4 +198,73 @@ const convert: Convert = ({ inputText, document, selection, projectRoot }) => {
   return `\n${inputText}  \n[[ファイル](${relativeFilePathWithLineNumber})]${
     githubUrl ? ` [[GitHub](${githubUrl})]` : ""
   }\n\n${codeBlock}\n`;
+};
+
+type MemoJSONContent = {
+  filePath: string;
+  lineNumber: number;
+  memo: string;
+};
+
+const InlineMemoWriter = (projectRoot: string, suffix: string) => {
+  let map = new Map<MemoJSONContent["filePath"], MemoJSONContent[]>();
+
+  const init = () => {
+    map = new Map<MemoJSONContent["filePath"], MemoJSONContent[]>();
+
+    const memoFilePaths = readdirSync(projectRoot)
+      .filter((file) => file.endsWith(`.${suffix}.json`))
+      .flatMap((file) => join(projectRoot, file));
+
+    const memoJSONContents = memoFilePaths.flatMap((filePath) => {
+      const file = readFileSync(filePath, "utf-8");
+      return JSON.parse(file) as MemoJSONContent[];
+    });
+
+    memoJSONContents.forEach((memoJSONContent) => {
+      map.set(memoJSONContent.filePath, [
+        ...(map.get(memoJSONContent.filePath) ?? []),
+        memoJSONContent,
+      ]);
+    });
+  };
+
+  const reflect = () => {
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showErrorMessage("No found active editor");
+      return;
+    }
+
+    const filePath = editor.document.fileName;
+    const relativeFilePath = relative(projectRoot, filePath);
+
+    const memoJSONContents = map.get(relativeFilePath) ?? [];
+
+    memoJSONContents.forEach((memoJSONContent) => {
+      const decorationType = vscode.window.createTextEditorDecorationType({
+        after: {
+          contentText: `📝 ${memoJSONContent.memo}`,
+          margin: "0 0 0 20px",
+          color: "rgba(153, 153, 153, 0.7)",
+        },
+        isWholeLine: true,
+      });
+
+      const range = new vscode.Range(
+        memoJSONContent.lineNumber,
+        0,
+        memoJSONContent.lineNumber,
+        0
+      );
+      editor.setDecorations(decorationType, [range]);
+    });
+  };
+
+  init();
+
+  return {
+    reset: init,
+    reflect,
+  };
 };
