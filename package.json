@@ -3,6 +3,11 @@
   "displayName": "code-reading-memo",
   "description": "",
   "version": "0.0.1",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/takaaa220/vscode_code_reading_memo"
+  },
   "engines": {
     "vscode": "^1.54.0"
   },
