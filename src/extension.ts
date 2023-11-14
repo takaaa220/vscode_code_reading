@@ -1,14 +1,9 @@
 import * as vscode from "vscode";
-import { join, relative } from "path";
-import {
-  accessSync,
-  appendFileSync,
-  constants,
-  readFileSync,
-  readdirSync,
-  writeFileSync,
-} from "fs";
-import { execSync } from "child_process";
+import { relative } from "path";
+import { MemoContent } from "./memo";
+import { MemoReflector } from "./reflector";
+import { generateKey, getGithubRemoteFilePath } from "./helper";
+import { readMemoTitles, readMemoContentFiles, writeToMemoFiles } from "./io";
 
 export function activate(context: vscode.ExtensionContext) {
   const suffix = "code_memo";
@@ -21,17 +16,15 @@ export function activate(context: vscode.ExtensionContext) {
 
   const projectRoot = workspaceFolders[0].uri.fsPath;
 
-  const memoWriter = MemoWriter(projectRoot, suffix);
-  const memoReflector = MemoReflector();
+  let currentMemoTitle = "";
+
+  const memoStore = MemoStore(readMemoContentFiles(projectRoot, suffix));
+  const memoReflector = MemoReflector(projectRoot, memoStore.getMemos());
 
   const newMemo = async () => {
-    const memoFiles = readdirSync(projectRoot)
-      .filter((file) => file.endsWith(`.${suffix}.md`))
-      .map((file) => file.replace(`.${suffix}.md`, ""));
-
     const newOption = "[Create new file]";
 
-    const pickOptions = [newOption, ...memoFiles];
+    const pickOptions = [newOption, ...readMemoTitles(projectRoot, suffix)];
     const selected = await vscode.window.showQuickPick(pickOptions, {
       placeHolder: "Create new file or select existing memo",
     });
@@ -50,9 +43,9 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      memoWriter.initializeMemo(title);
+      currentMemoTitle = title;
     } else {
-      memoWriter.initializeMemo(selected);
+      currentMemoTitle = selected;
     }
 
     vscode.window.showInformationMessage("Initialized memo!");
@@ -65,7 +58,7 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    if (!memoWriter.initialized()) {
+    if (!currentMemoTitle) {
       await newMemo();
     }
 
@@ -75,19 +68,22 @@ export function activate(context: vscode.ExtensionContext) {
         return;
       }
 
-      const memoJSONContent = toMemoJSONContent({
+      const memoContent = toMemoContent({
         memo: inputText,
         document: editor.document,
         selection: editor.selection,
         projectRoot,
       });
 
-      memoWriter.addMemo(memoJSONContent);
+      memoStore.addMemo(currentMemoTitle, memoContent);
+      memoReflector.refresh(memoStore.getMemos());
 
-      memoReflector.reflect(
-        editor,
-        memoWriter.getMemoJSONContentsByFile(memoJSONContent.filePath)
-      );
+      const res = writeToMemoFiles({
+        projectRoot,
+        suffix,
+        memoTitle: currentMemoTitle,
+        memoContents: memoStore.getMemosByMemoTitle(currentMemoTitle),
+      });
 
       vscode.window
         .showInformationMessage("Added memo!", "Open memo")
@@ -97,10 +93,54 @@ export function activate(context: vscode.ExtensionContext) {
           }
 
           vscode.workspace
-            .openTextDocument(memoWriter.getCurrentActiveMarkdownFile())
-            .then((doc) => {
-              vscode.window.showTextDocument(doc);
-            });
+            .openTextDocument(res.md)
+            .then(vscode.window.showTextDocument);
+        });
+    });
+  };
+
+  const updateMemo = (filePath: string, id: string, memoTitle: string) => {
+    if (!filePath || !id || !memoTitle) {
+      vscode.window.showErrorMessage("Please select memo");
+      return;
+    }
+
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showErrorMessage("No found active editor");
+      return;
+    }
+
+    const memoContent = memoStore
+      .getMemosByFilePath(filePath)
+      .find((memo) => memo.id === id);
+    if (!memoContent) {
+      vscode.window.showErrorMessage("No found memo");
+      return;
+    }
+
+    vscode.window.showInputBox({ prompt: "Input memo" }).then((inputText) => {
+      if (inputText === undefined) {
+        vscode.window.showErrorMessage("Please input memo");
+        return;
+      }
+
+      const updateMemoContent = {
+        ...memoContent,
+        memo: inputText,
+      };
+
+      memoStore.addMemo(currentMemoTitle, updateMemoContent);
+      memoReflector.refresh(memoStore.getMemos());
+
+      vscode.window
+        .showInformationMessage("Added memo!", "Open memo")
+        .then((selection) => {
+          if (selection !== "Open memo") {
+            return;
+          }
+
+          // do something
         });
     });
   };
@@ -113,126 +153,30 @@ export function activate(context: vscode.ExtensionContext) {
     "extension.addMemo",
     addMemo
   );
+  let disposeUpdateMemo = vscode.commands.registerCommand(
+    "extension.updateMemo",
+    updateMemo
+  );
   const disposeReflector = vscode.workspace.onDidOpenTextDocument(() => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
       return;
     }
 
-    memoReflector.reflect(
-      editor,
-      memoWriter.getMemoJSONContentsByFile(
-        relative(projectRoot, editor.document.fileName)
-      )
-    );
+    memoReflector.refresh(memoStore.getMemos());
   });
 
-  context.subscriptions.push(disposeNewMemo, disposeAddMemo, disposeReflector);
+  context.subscriptions.push(
+    disposeNewMemo,
+    disposeAddMemo,
+    disposeReflector,
+    vscode.languages.registerCodeLensProvider("*", memoReflector.provider)
+  );
 }
 
 export function deactivate() {}
 
-const MemoWriter = (projectRoot: string, suffix: string) => {
-  let currentActiveFilePathWithoutExt = "";
-
-  const memoStore = MemoStore(projectRoot, suffix);
-
-  const initializeMemo = (title: string) => {
-    const fileNameWithExt = title.replace(/\s/g, "_");
-    currentActiveFilePathWithoutExt = `${projectRoot}/${fileNameWithExt}.${suffix}`;
-
-    try {
-      accessSync(getActiveMarkdownFilePath(), constants.F_OK);
-    } catch {
-      writeFileSync(getActiveMarkdownFilePath(), `# ${title}\n`);
-    }
-
-    try {
-      accessSync(getActiveJSONFilePath(), constants.F_OK);
-    } catch {
-      writeFileSync(getActiveJSONFilePath(), "[]");
-    }
-  };
-
-  const addMemo = (memoJSONContent: MemoJSONContent) => {
-    if (!currentActiveFilePathWithoutExt) {
-      return;
-    }
-
-    memoStore.addMemo(memoJSONContent);
-
-    writeFileSync(
-      getActiveJSONFilePath(),
-      JSON.stringify(
-        memoStore.getMemoJSONContentsByFile(memoJSONContent.filePath),
-        null,
-        2
-      )
-    );
-
-    appendFileSync(
-      getActiveMarkdownFilePath(),
-      outputMarkdown(memoJSONContent)
-    );
-  };
-
-  const getActiveMarkdownFilePath = () => {
-    return currentActiveFilePathWithoutExt
-      ? `${currentActiveFilePathWithoutExt}.md`
-      : "";
-  };
-
-  const getActiveJSONFilePath = () => {
-    return currentActiveFilePathWithoutExt
-      ? `${currentActiveFilePathWithoutExt}.json`
-      : "";
-  };
-
-  return {
-    initialized: () => !!currentActiveFilePathWithoutExt,
-    getCurrentActiveMarkdownFile: getActiveMarkdownFilePath,
-    initializeMemo,
-    addMemo,
-    getMemoJSONContentsByFile: memoStore.getMemoJSONContentsByFile,
-  };
-};
-
-type Output = (memoJSONContent: MemoJSONContent) => string;
-
-const outputMarkdown: Output = ({
-  memo,
-  startLine,
-  startCharacter,
-  endLine,
-  endCharacter,
-  filePath,
-  githubRemoteFilePath,
-  selectedText,
-}) => {
-  const ext = filePath.split(".").pop();
-  const codeBlock = `\`\`\`${ext ?? ""}\n${selectedText}\n\`\`\``;
-
-  return `\n${memo}  \n[[ファイル](${filePath}#L${startLine + 1})]${
-    githubRemoteFilePath
-      ? ` [[GitHub](${githubRemoteFilePath}#L${startLine + 1}C${
-          startCharacter + 1
-        }-L${endLine + 1}C${endCharacter + 1})]`
-      : ""
-  }\n\n${codeBlock}\n`;
-};
-
-type MemoJSONContent = {
-  filePath: string;
-  githubRemoteFilePath?: string;
-  startLine: number;
-  startCharacter: number;
-  endLine: number;
-  endCharacter: number;
-  memo: string;
-  selectedText: string;
-};
-
-const toMemoJSONContent = ({
+const toMemoContent = ({
   memo,
   document,
   selection,
@@ -242,7 +186,7 @@ const toMemoJSONContent = ({
   document: vscode.TextDocument;
   selection: vscode.Selection;
   projectRoot: string;
-}): MemoJSONContent => {
+}): MemoContent => {
   const startLine = selection.start.line;
   const startCharacter = selection.start.character;
   const endLine = selection.end.line;
@@ -250,28 +194,10 @@ const toMemoJSONContent = ({
 
   const relativeFilePath = relative(projectRoot, document.fileName);
 
-  const githubRemoteFilePath = (() => {
-    try {
-      const remoteUrl = execSync(
-        `cd ${projectRoot} && git config --get remote.origin.url`
-      )
-        .toString()
-        .trim();
-      const commitHash = execSync(`cd ${projectRoot} && git rev-parse HEAD`)
-        .toString()
-        .trim();
-
-      const match = /github\.com[:/](.+)\/(.+)\.git/.exec(remoteUrl);
-      if (!match) {
-        return undefined;
-      }
-
-      const [, userName, repoName] = match;
-      return `https://github.com/${userName}/${repoName}/blob/${commitHash}/${relativeFilePath}`;
-    } catch {
-      return undefined;
-    }
-  })();
+  const githubRemoteFilePath = getGithubRemoteFilePath(
+    projectRoot,
+    relativeFilePath
+  );
 
   const selectedText = [...Array(endLine - startLine + 1).keys()]
     .map((_, i) => {
@@ -281,6 +207,7 @@ const toMemoJSONContent = ({
     .join("\n");
 
   return {
+    id: generateKey(),
     startLine,
     startCharacter,
     endLine,
@@ -292,121 +219,55 @@ const toMemoJSONContent = ({
   };
 };
 
-const MemoStore = (projectRoot: string, suffix: string) => {
-  let map = new Map<MemoJSONContent["filePath"], MemoJSONContent[]>();
+const MemoStore = (
+  initialValues: {
+    [filePath: MemoContent["filePath"]]: {
+      memoTitle: string;
+      content: MemoContent;
+    }[];
+  } = {}
+) => {
+  let map = new Map<
+    MemoContent["filePath"],
+    { memoTitle: string; content: MemoContent }[]
+  >();
 
-  const init = () => {
-    const memoFilePaths = readdirSync(projectRoot)
-      .filter((file) => file.endsWith(`.${suffix}.json`))
-      .flatMap((file) => join(projectRoot, file));
+  const toContents = (
+    memoTitleAndContents: {
+      memoTitle: string;
+      content: MemoContent;
+    }[]
+  ) => memoTitleAndContents.map(({ content }) => content);
 
-    const memoJSONContents = memoFilePaths.flatMap((filePath) => {
-      const file = readFileSync(filePath, "utf-8");
-      return JSON.parse(file) as MemoJSONContent[];
-    });
-
-    memoJSONContents.forEach((memoJSONContent) => {
-      map.set(memoJSONContent.filePath, [
-        ...(map.get(memoJSONContent.filePath) ?? []),
-        memoJSONContent,
-      ]);
-    });
-  };
-
-  const addMemo = (memoJSONContent: MemoJSONContent) => {
-    map.set(memoJSONContent.filePath, [
-      ...(map.get(memoJSONContent.filePath) ?? []),
-      memoJSONContent,
+  const addMemo = (memoTitle: string, memoContent: MemoContent) => {
+    map.set(memoContent.filePath, [
+      ...(map.get(memoContent.filePath) ?? []),
+      { memoTitle, content: memoContent },
     ]);
   };
 
-  const getMemoJSONContentsByFile = (filePath: string) => {
-    return map.get(filePath) ?? [];
+  const getMemosByFilePath = (filePath: string) => {
+    return toContents(map.get(filePath) ?? []);
   };
 
-  init();
+  const getMemosByMemoTitle = (memoTitle: string) => {
+    return toContents(
+      [...map.values()].flat().filter((memo) => memo.memoTitle === memoTitle)
+    );
+  };
+
+  const getMemos = () => {
+    return toContents([...map.values()].flat());
+  };
+
+  Object.entries(initialValues).forEach(([filePath, memoTitleAndContents]) => {
+    map.set(filePath, memoTitleAndContents);
+  });
 
   return {
-    reset: () => {
-      map = new Map<MemoJSONContent["filePath"], MemoJSONContent[]>();
-      init();
-    },
     addMemo,
-    getMemoJSONContentsByFile,
-  };
-};
-
-const MemoReflector = () => {
-  const map = new Map<
-    MemoJSONContent["filePath"],
-    vscode.TextEditorDecorationType[]
-  >();
-
-  const reflect = (
-    editor: vscode.TextEditor,
-    memoJSONContents: MemoJSONContent[]
-  ) => {
-    // ファイルに適用されているデコレーションを消す (重複しないようにするため)
-    memoJSONContents.forEach((memoJSONContent) => {
-      map.get(memoJSONContent.filePath)?.forEach((decorationType) => {
-        editor.setDecorations(decorationType, []);
-        decorationType.dispose();
-      });
-
-      map.delete(memoJSONContent.filePath);
-    });
-
-    memoJSONContents.forEach((memoJSONContent) => {
-      const decorationTypeForText =
-        vscode.window.createTextEditorDecorationType({
-          after: {
-            contentText: `📝 ${
-              memoJSONContent.memo.length > 50
-                ? `${memoJSONContent.memo.slice(50)}...`
-                : memoJSONContent.memo
-            }`,
-            margin: "0 0 0 16px",
-            color: "rgba(153, 153, 153, 0.7)",
-          },
-          isWholeLine: true,
-        });
-      const rangeForText = new vscode.Range(
-        memoJSONContent.startLine,
-        0,
-        memoJSONContent.startLine,
-        0
-      );
-      editor.setDecorations(decorationTypeForText, [
-        {
-          range: rangeForText,
-          hoverMessage: new vscode.MarkdownString(
-            outputMarkdown(memoJSONContent)
-          ),
-        },
-      ]);
-
-      const decorationTypeForBackground =
-        vscode.window.createTextEditorDecorationType({
-          backgroundColor: "rgba(153, 153, 153, 0.1)",
-          rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
-        });
-      const rangeForBackground = new vscode.Range(
-        memoJSONContent.startLine,
-        memoJSONContent.startCharacter,
-        memoJSONContent.endLine,
-        memoJSONContent.endCharacter
-      );
-      editor.setDecorations(decorationTypeForBackground, [rangeForBackground]);
-
-      map.set(memoJSONContent.filePath, [
-        ...(map.get(memoJSONContent.filePath) ?? []),
-        decorationTypeForText,
-        decorationTypeForBackground,
-      ]);
-    });
-  };
-
-  return {
-    reflect,
+    getMemosByFilePath,
+    getMemosByMemoTitle,
+    getMemos,
   };
 };
