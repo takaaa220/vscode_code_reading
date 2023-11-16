@@ -4,6 +4,7 @@ import { MemoContent } from "./memo";
 import { MemoReflector } from "./reflector";
 import { generateKey, getGithubRemoteFilePath } from "./helper";
 import { readMemoTitles, readMemoContentFiles, writeToMemoFiles } from "./io";
+import { Commands } from "./command";
 
 export function activate(context: vscode.ExtensionContext) {
   const suffix = "code_memo";
@@ -78,29 +79,17 @@ export function activate(context: vscode.ExtensionContext) {
       memoStore.addMemo(currentMemoTitle, memoContent);
       memoReflector.refresh(memoStore.getMemos());
 
-      const res = writeToMemoFiles({
+      writeToMemoFiles({
         projectRoot,
         suffix,
         memoTitle: currentMemoTitle,
         memoContents: memoStore.getMemosByMemoTitle(currentMemoTitle),
       });
-
-      vscode.window
-        .showInformationMessage("Added memo!", "Open memo")
-        .then((selection) => {
-          if (selection !== "Open memo") {
-            return;
-          }
-
-          vscode.workspace
-            .openTextDocument(res.md)
-            .then(vscode.window.showTextDocument);
-        });
     });
   };
 
-  const updateMemo = (filePath: string, id: string, memoTitle: string) => {
-    if (!filePath || !id || !memoTitle) {
+  const updateMemo = (filePath: string, id: string) => {
+    if (!filePath || !id) {
       vscode.window.showErrorMessage("Please select memo");
       return;
     }
@@ -111,9 +100,7 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    const memoContent = memoStore
-      .getMemosByFilePath(filePath)
-      .find((memo) => memo.id === id);
+    const memoContent = memoStore.getMemoByFilePathAndId(filePath, id);
     if (!memoContent) {
       vscode.window.showErrorMessage("No found memo");
       return;
@@ -126,36 +113,54 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       const updateMemoContent = {
-        ...memoContent,
+        ...memoContent.content,
         memo: inputText,
       };
 
-      memoStore.addMemo(currentMemoTitle, updateMemoContent);
+      memoStore.updateMemo(id, updateMemoContent);
       memoReflector.refresh(memoStore.getMemos());
 
-      vscode.window
-        .showInformationMessage("Added memo!", "Open memo")
-        .then((selection) => {
-          if (selection !== "Open memo") {
-            return;
-          }
-
-          // do something
-        });
+      writeToMemoFiles({
+        projectRoot,
+        suffix,
+        memoTitle: currentMemoTitle,
+        memoContents: memoStore.getMemosByMemoTitle(currentMemoTitle),
+      });
     });
   };
 
-  let disposeNewMemo = vscode.commands.registerCommand(
-    "extension.newMemo",
-    newMemo
-  );
-  let disposeAddMemo = vscode.commands.registerCommand(
-    "extension.addMemo",
-    addMemo
-  );
+  const deleteMemo = (filePath: string, id: string) => {
+    if (!filePath || !id) {
+      vscode.window.showErrorMessage("Please select memo");
+      return;
+    }
+
+    const deletedContent = memoStore.getMemoByFilePathAndId(filePath, id);
+    if (!deletedContent) {
+      vscode.window.showErrorMessage("No found memo");
+      return;
+    }
+
+    memoStore.deleteMemo(id, filePath);
+    memoReflector.refresh(memoStore.getMemos());
+
+    writeToMemoFiles({
+      projectRoot,
+      suffix,
+      memoTitle: deletedContent.memoTitle,
+      memoContents: memoStore.getMemosByMemoTitle(deletedContent.memoTitle),
+    });
+  };
+
+  let disposeNewMemo = vscode.commands.registerCommand(Commands.new, newMemo);
+  let disposeAddMemo = vscode.commands.registerCommand(Commands.add, addMemo);
   let disposeUpdateMemo = vscode.commands.registerCommand(
-    "extension.updateMemo",
+    Commands.update,
     updateMemo
+  );
+  let disposeDeleteMemo = vscode.commands.registerCommand(
+    Commands.delete,
+    deleteMemo
   );
   const disposeReflector = vscode.workspace.onDidOpenTextDocument(() => {
     const editor = vscode.window.activeTextEditor;
@@ -169,6 +174,8 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     disposeNewMemo,
     disposeAddMemo,
+    disposeUpdateMemo,
+    disposeDeleteMemo,
     disposeReflector,
     vscode.languages.registerCodeLensProvider("*", memoReflector.provider)
   );
@@ -246,14 +253,30 @@ const MemoStore = (
     ]);
   };
 
-  const getMemosByFilePath = (filePath: string) => {
-    return toContents(map.get(filePath) ?? []);
+  const updateMemo = (id: string, memoContent: MemoContent) => {
+    map.set(memoContent.filePath, [
+      ...(map.get(memoContent.filePath) ?? []).map((memo) => {
+        return memo.content.id === id
+          ? { memoTitle: memo.memoTitle, content: memoContent }
+          : memo;
+      }),
+    ]);
+  };
+
+  const deleteMemo = (id: string, filePath: string) => {
+    map.set(filePath, [
+      ...(map.get(filePath) ?? []).filter((memo) => memo.content.id !== id),
+    ]);
   };
 
   const getMemosByMemoTitle = (memoTitle: string) => {
     return toContents(
       [...map.values()].flat().filter((memo) => memo.memoTitle === memoTitle)
     );
+  };
+
+  const getMemoByFilePathAndId = (filePath: string, id: string) => {
+    return map.get(filePath)?.find((memo) => memo.content.id === id);
   };
 
   const getMemos = () => {
@@ -266,8 +289,10 @@ const MemoStore = (
 
   return {
     addMemo,
-    getMemosByFilePath,
+    updateMemo,
+    deleteMemo,
     getMemosByMemoTitle,
+    getMemoByFilePathAndId,
     getMemos,
   };
 };

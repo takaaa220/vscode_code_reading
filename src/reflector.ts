@@ -2,6 +2,7 @@ import { relative } from "path";
 import { MemoContent } from "./memo";
 import * as vscode from "vscode";
 import { truncate } from "./helper";
+import { Commands } from "./command";
 
 export const MemoReflector = (
   projectRoot: string,
@@ -53,11 +54,13 @@ class CodelensProvider implements vscode.CodeLensProvider {
 
         const updateCommand: vscode.Command = {
           title: `Update "${truncate(memoContent.memo, 10)}"`,
-          command: "",
+          command: Commands.update,
+          arguments: [memoContent.filePath, memoContent.id],
         };
         const removeCommand: vscode.Command = {
           title: `Remove "${truncate(memoContent.memo, 10)}"`,
-          command: "",
+          command: Commands.delete,
+          arguments: [memoContent.filePath, memoContent.id],
         };
 
         return [
