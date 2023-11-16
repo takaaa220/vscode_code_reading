@@ -3,15 +3,18 @@ import { MemoContent } from "./memo";
 import * as vscode from "vscode";
 import { truncate } from "./helper";
 import { Commands } from "./command";
+import { outputMarkdown } from "./output";
 
 export const MemoReflector = (
   projectRoot: string,
   memoContents: MemoContent[]
 ) => {
   const provider = new CodelensProvider(projectRoot, memoContents);
+  const decorator = InlineDecorator(projectRoot);
 
-  const refresh = (memoContents: MemoContent[]) => {
+  const refresh = (editor: vscode.TextEditor, memoContents: MemoContent[]) => {
     provider.refresh(memoContents);
+    decorator.reflect(editor, memoContents);
   };
 
   return {
@@ -70,3 +73,81 @@ class CodelensProvider implements vscode.CodeLensProvider {
       });
   }
 }
+
+// TODO: 削除時にデコレーションが消えないバグを修正する
+const InlineDecorator = (projectRoot: string) => {
+  const map = new Map<
+    MemoContent["filePath"],
+    vscode.TextEditorDecorationType[]
+  >();
+
+  const reflect = (
+    editor: vscode.TextEditor,
+    memoJSONContents: MemoContent[]
+  ) => {
+    const relativeFilePath = relative(projectRoot, editor.document.fileName);
+
+    const targetMemoJSONContents = memoJSONContents.filter(
+      (memoJSONContent) => memoJSONContent.filePath === relativeFilePath
+    );
+
+    // ファイルに適用されているデコレーションを消す (重複しないようにするため)
+    targetMemoJSONContents.forEach((memoJSONContent) => {
+      map.get(memoJSONContent.filePath)?.forEach((decorationType) => {
+        editor.setDecorations(decorationType, []);
+        decorationType.dispose();
+      });
+
+      map.delete(memoJSONContent.filePath);
+    });
+
+    targetMemoJSONContents.forEach((memoJSONContent) => {
+      const decorationTypeForText =
+        vscode.window.createTextEditorDecorationType({
+          after: {
+            contentText: `📝 ${truncate(memoJSONContent.memo, 30)}`,
+            margin: "0 0 0 16px",
+            color: "rgba(153, 153, 153, 0.7)",
+          },
+          isWholeLine: true,
+        });
+      const rangeForText = new vscode.Range(
+        memoJSONContent.startLine,
+        0,
+        memoJSONContent.startLine,
+        0
+      );
+      editor.setDecorations(decorationTypeForText, [
+        {
+          range: rangeForText,
+          hoverMessage: new vscode.MarkdownString(
+            outputMarkdown(memoJSONContent)
+          ),
+        },
+      ]);
+
+      const decorationTypeForBackground =
+        vscode.window.createTextEditorDecorationType({
+          backgroundColor: "rgba(153, 153, 153, 0.1)",
+          rangeBehavior: vscode.DecorationRangeBehavior.ClosedClosed,
+        });
+      const rangeForBackground = new vscode.Range(
+        memoJSONContent.startLine,
+        memoJSONContent.startCharacter,
+        memoJSONContent.endLine,
+        memoJSONContent.endCharacter
+      );
+      editor.setDecorations(decorationTypeForBackground, [rangeForBackground]);
+
+      map.set(memoJSONContent.filePath, [
+        ...(map.get(memoJSONContent.filePath) ?? []),
+        decorationTypeForText,
+        decorationTypeForBackground,
+      ]);
+    });
+  };
+
+  return {
+    reflect,
+  };
+};

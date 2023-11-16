@@ -77,7 +77,7 @@ export function activate(context: vscode.ExtensionContext) {
       });
 
       memoStore.addMemo(currentMemoTitle, memoContent);
-      memoReflector.refresh(memoStore.getMemos());
+      memoReflector.refresh(editor, memoStore.getMemos());
 
       writeToMemoFiles({
         projectRoot,
@@ -118,7 +118,7 @@ export function activate(context: vscode.ExtensionContext) {
       };
 
       memoStore.updateMemo(id, updateMemoContent);
-      memoReflector.refresh(memoStore.getMemos());
+      memoReflector.refresh(editor, memoStore.getMemos());
 
       writeToMemoFiles({
         projectRoot,
@@ -135,6 +135,12 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
+    const editor = vscode.window.activeTextEditor;
+    if (!editor) {
+      vscode.window.showErrorMessage("No found active editor");
+      return;
+    }
+
     const deletedContent = memoStore.getMemoByFilePathAndId(filePath, id);
     if (!deletedContent) {
       vscode.window.showErrorMessage("No found memo");
@@ -142,7 +148,7 @@ export function activate(context: vscode.ExtensionContext) {
     }
 
     memoStore.deleteMemo(id, filePath);
-    memoReflector.refresh(memoStore.getMemos());
+    memoReflector.refresh(editor, memoStore.getMemos());
 
     writeToMemoFiles({
       projectRoot,
@@ -168,7 +174,7 @@ export function activate(context: vscode.ExtensionContext) {
       return;
     }
 
-    memoReflector.refresh(memoStore.getMemos());
+    memoReflector.refresh(editor, memoStore.getMemos());
   });
 
   context.subscriptions.push(
