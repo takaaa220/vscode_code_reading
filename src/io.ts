@@ -68,7 +68,7 @@ export const writeToMemoFiles = ({
 
   writeFileSync(
     md,
-    `# ${memoTitle}\n${memoContents.map(outputMarkdown).join("\n")}`
+    `# ${memoTitle}\n\n${memoContents.map(outputMarkdown).join("\n")}`
   );
 
   writeFileSync(json, JSON.stringify(memoContents, null, 2));
