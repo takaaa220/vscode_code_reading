@@ -74,7 +74,7 @@ class CodelensProvider implements vscode.CodeLensProvider {
   }
 }
 
-// TODO: 削除時にデコレーションが消えないバグを修正する
+// TODO: Fix the bug that decorations are not removed when deleted
 const InlineDecorator = (projectRoot: string) => {
   const map = new Map<
     MemoContent["filePath"],
@@ -91,7 +91,7 @@ const InlineDecorator = (projectRoot: string) => {
       (memoJSONContent) => memoJSONContent.filePath === relativeFilePath
     );
 
-    // ファイルに適用されているデコレーションを消す (重複しないようにするため)
+    // Remove decorations applied to the file (to avoid duplication)
     targetMemoJSONContents.forEach((memoJSONContent) => {
       map.get(memoJSONContent.filePath)?.forEach((decorationType) => {
         editor.setDecorations(decorationType, []);

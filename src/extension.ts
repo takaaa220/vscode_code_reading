@@ -5,9 +5,11 @@ import { MemoReflector } from "./reflector";
 import { generateKey, getGithubRemoteFilePath } from "./helper";
 import { readMemoTitles, readMemoContentFiles, writeToMemoFiles } from "./io";
 import { Commands } from "./command";
+import { SettingReader } from "./settings";
 
 export function activate(context: vscode.ExtensionContext) {
-  const suffix = "code_memo";
+  const setting = SettingReader();
+  const suffix = setting.fileSuffix;
 
   const workspaceFolders = vscode.workspace.workspaceFolders;
   if (!workspaceFolders) {

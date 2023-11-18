@@ -39,7 +39,17 @@
         "title": "Add Memo",
         "category": "Code Reading Memo"
       }
-    ]
+    ],
+    "configuration": {
+      "title": "code-reading-memo",
+      "properties": {
+        "codeReadingMemo.fileSuffix": {
+          "type": "string",
+          "default": "code_memo",
+          "description": "suffix for memo file name"
+        }
+      }
+    }
   },
   "scripts": {
     "vscode:prepublish": "pnpm run compile",

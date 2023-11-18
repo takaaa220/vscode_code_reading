@@ -29,7 +29,7 @@ So you need to install it manually.
 2. Run `pnpm install`
 3. Run `vsce package --no-dependencies`
 4. Run `code --install-extension code-reading-memo-0.0.1.vsix`
-5. [Optional] Set global gitignore for `*.code_memo.md` and `*.code_memo.json`
+5. [Optional] Set global gitignore for `*.code_memo.md` and `*.code_memo.json` (If you set `codeReadingMemo.fileSuffix` option, you need to set global gitignore for `*.{fileSuffix}.md` and `*.{fileSuffix}.json`)
 
 ## Usage
 
@@ -44,3 +44,7 @@ So you need to install it manually.
 
 1. Execute `Code Reading Memo: New memo` from command palette
 2. Input new memo title
+
+## Options
+
+- `codeReadingMemo.fileSuffix`: (String) Suffix of memo file name (default: `code_memo`)
